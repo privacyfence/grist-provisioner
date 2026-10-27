@@ -1,0 +1,68 @@
+name: real-grist
+
+on:
+  push:
+    branches: ["feature/**", "fix/**"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      grist_image:
+        description: Grist image to test against
+        default: gristlabs/grist:1.7.21
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+env:
+  GRIST_IMAGE: ${{ github.event_name == 'schedule' && 'gristlabs/grist:latest' || inputs.grist_image || 'gristlabs/grist:1.7.21' }}
+
+jobs:
+  real-grist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Start Grist
+        run: |
+          persist="$RUNNER_TEMP/persist"
+          mkdir -p "$persist"
+          boot="$(openssl rand -hex 16)"
+          echo "::add-mask::$boot"
+          echo "GRIST_BOOT_KEY=$boot" >> "$GITHUB_ENV"
+          echo "PERSIST=$persist" >> "$GITHUB_ENV"
+          docker run -d --name grist --user "$(id -u):$(id -g)" -p 8484:8484 \
+            -v "$persist:/persist" \
+            -e GRIST_DEFAULT_EMAIL=admin@example.com \
+            -e GRIST_BOOT_KEY="$boot" \
+            -e GRIST_IN_SERVICE=true \
+            "$GRIST_IMAGE"
+      - name: Wait for Grist
+        run: |
+          for _ in $(seq 1 60); do
+            curl -fsS http://localhost:8484/status && exit 0
+            sleep 2
+          done
+          docker logs grist
+          exit 1
+      - name: Build the provisioner image
+        run: docker build --build-arg SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0.dev0 -t grist-provisioner:ci .
+      - run: pip install -e ".[test]"
+      - name: Test against real Grist
+        env:
+          GRIST_URL: http://localhost:8484
+          GRIST_HOME_DB: ${{ runner.temp }}/persist/home.sqlite3
+        run: pytest tests/real_grist -q -m real_grist
+      - name: Check with the provisioner image
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PERSIST:/persist" \
+            -e GRIST_DEFAULT_EMAIL=admin@example.com grist-provisioner:ci check
+      - name: Grist logs
+        if: failure()
+        run: docker logs grist

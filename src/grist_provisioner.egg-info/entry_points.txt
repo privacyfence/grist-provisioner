@@ -1,2 +1,0 @@
-[console_scripts]
-grist-provisioner = grist_provisioner.cli:main

@@ -41,6 +41,7 @@ jobs:
             -v "$persist:/persist" \
             -e GRIST_DEFAULT_EMAIL=admin@example.com \
             -e GRIST_BOOT_KEY="$boot" \
+            -e GRIST_IN_SERVICE=true \
             "$GRIST_IMAGE"
       - name: Wait for Grist
         run: |

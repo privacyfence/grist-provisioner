@@ -1,0 +1,30 @@
+project:
+  name: Grist provisioner
+docs:
+  must_read:
+    - README.md
+  plan_dir: docs
+  changelog:
+    file: CHANGELOG.md
+    section: "## [Unreleased]"
+git:
+  main_branch: main
+  branch_pattern: "<type>/<kebab-case>"
+  branch_types: [feature, fix, chore]
+  merge_style: merge-commit
+verify:
+  fast:
+    - ruff check .
+    - python3 -m pytest tests -q -m "not real_grist"
+  dod:
+    - python3 -m pytest tests -q -m "not real_grist" --cov=grist_provisioner --cov-branch --cov-report=term-missing --cov-fail-under=100
+    - ruff check .
+    - python3 -m mypy src
+    - bandit -q -r src
+ci:
+  dispatchable:
+    - workflow: real-grist.yml
+      use_when: The provisioner against a real grist-core container (the cloud session has no Docker)
+      notes: It runs by itself on every push to feature/** and fix/** (read that run). workflow_dispatch with input `grist_image` works only once the workflow is on main.
+stacks:
+  - python

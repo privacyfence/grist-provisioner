@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-27
+
 ### Added
 
 - **Grist provisioner.** Gives PrivacyFence each person's Grist API key on a self-hosted grist-core, behind a scoped provisioning key.

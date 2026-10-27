@@ -3,7 +3,9 @@ FROM python:3.12-slim
 ARG SETUPTOOLS_SCM_PRETEND_VERSION=0.0.0.dev0
 
 # No fixed uid: deployments override it with compose `user:` to match Grist's `grist` user.
-RUN useradd --create-home provisioner
+RUN useradd --create-home provisioner \
+    && mkdir /data \
+    && chmod 0777 /data
 
 WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./

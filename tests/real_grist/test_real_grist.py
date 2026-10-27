@@ -27,7 +27,7 @@ def test_provisioner_against_real_grist(tmp_path):
     people = ("alice", "bob", "carol")
 
     with httpx.Client(base_url=GRIST_URL, headers=boot, timeout=30) as grist:
-        created = grist.post("/api/orgs", json={"name": "QA", "domain": "qa"})
+        created = grist.post("/api/orgs", json={"name": "QA", "domain": "qa-org"})
         assert created.status_code == 200, created.text
         shared = grist.patch(
             f"/api/orgs/{created.json()}/access",

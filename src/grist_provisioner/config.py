@@ -42,7 +42,7 @@ class Settings:
         return cls(
             grist_home_db=environ.get("GRIST_HOME_DB", "/persist/home.sqlite3"),
             state_db=environ.get("PROVISIONER_STATE_DB", "/data/provisioner.sqlite3"),
-            host=environ.get("PROVISIONER_HOST", "0.0.0.0"),
+            host=environ.get("PROVISIONER_HOST", "0.0.0.0"),  # nosec B104
             port=port,
             admin_email=admin_email,
             default_email=default_email,

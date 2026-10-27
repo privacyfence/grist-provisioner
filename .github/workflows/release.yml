@@ -3,31 +3,151 @@ name: release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Tag format
+        if: github.event_name == 'push'
+        run: |
+          if ! echo "$GITHUB_REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-(rc|alpha|beta|a|b)\.?[0-9]+)?$'; then
+            echo "::error::Tag $GITHUB_REF_NAME is not vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-rcN (also alphaN, betaN, aN, bN)"
+            exit 1
+          fi
+      - name: Tag is on main
+        if: github.event_name == 'push'
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME is not on main; tag the merge commit."
+            exit 1
+          fi
+      - name: Version
+        id: version
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.0.0.dev0"
+          fi
+          if [[ "$version" == *-* ]]; then
+            prerelease=true
+          else
+            prerelease=false
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+  tests:
+    needs: check
+    uses: ./.github/workflows/tests.yml
+
   image:
     runs-on: ubuntu-latest
+    needs: [check, tests]
     permissions:
       contents: read
       packages: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      PRERELEASE: ${{ needs.check.outputs.prerelease }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Version without the leading v
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        if: github.event_name == 'push'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - name: Image tags
+        id: tags
+        run: |
+          image=ghcr.io/privacyfence/grist-provisioner
+          tags="$image:$VERSION"
+          if [ "$PRERELEASE" = "false" ]; then
+            major_minor="${VERSION%.*}"
+            tags="$tags,$image:$major_minor,$image:latest"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+      - name: Build for checking
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          push: true
+          load: true
+          provenance: false
+          platforms: linux/amd64
+          tags: grist-provisioner:check
           build-args: SETUPTOOLS_SCM_PRETEND_VERSION=${{ env.VERSION }}
-          tags: |
-            ghcr.io/privacyfence/grist-provisioner:${{ env.VERSION }}
-            ghcr.io/privacyfence/grist-provisioner:latest
+      - name: Check the image version
+        run: |
+          got=$(docker run --rm --entrypoint python grist-provisioner:check -c "import importlib.metadata as m; print(m.version('grist-provisioner'))")
+          if [ "$got" = "$VERSION" ]; then
+            exit 0
+          fi
+          if [ "$PRERELEASE" = "true" ] && [[ "$got" == "${VERSION%%-*}"?* ]]; then
+            exit 0
+          fi
+          echo "::error::Image reports version $got, expected $VERSION"
+          exit 1
+      - name: Build and push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          build-args: SETUPTOOLS_SCM_PRETEND_VERSION=${{ env.VERSION }}
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.title=grist-provisioner
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  github-release:
+    runs-on: ubuntu-latest
+    needs: [check, image]
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      PRERELEASE: ${{ needs.check.outputs.prerelease }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Create the GitHub Release
+        run: |
+          awk -v h="## [$VERSION]" 'index($0,h)==1{f=1;next} /^## \[/{f=0} f' CHANGELOG.md > notes.md
+          IMAGE_LINE="Image: \`docker pull ghcr.io/privacyfence/grist-provisioner:$VERSION\`"
+          args=("$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME")
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          if [ -s notes.md ]; then
+            printf '\n%s\n' "$IMAGE_LINE" >> notes.md
+            gh release create "${args[@]}" --notes-file notes.md
+          else
+            echo "::warning::CHANGELOG.md has no section for $VERSION"
+            gh release create "${args[@]}" --generate-notes --notes "$IMAGE_LINE"
+          fi

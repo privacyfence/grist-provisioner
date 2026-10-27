@@ -1,0 +1,12 @@
+starlette
+uvicorn
+
+[dev]
+ruff
+mypy
+bandit
+
+[test]
+pytest
+pytest-cov
+httpx

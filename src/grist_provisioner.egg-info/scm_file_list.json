@@ -1,0 +1,30 @@
+{
+  "files": [
+    ".claude/toolkit.yaml",
+    ".dockerignore",
+    ".github/workflows/real-grist.yml",
+    ".github/workflows/release.yml",
+    ".github/workflows/tests.yml",
+    "CHANGELOG.md",
+    "Dockerfile",
+    "LICENSE",
+    "README.md",
+    "pyproject.toml",
+    "src/grist_provisioner/__init__.py",
+    "src/grist_provisioner/app.py",
+    "src/grist_provisioner/cli.py",
+    "src/grist_provisioner/config.py",
+    "src/grist_provisioner/griststore.py",
+    "src/grist_provisioner/service.py",
+    "src/grist_provisioner/state.py",
+    "tests/fixtures/grist_home_schema.sql",
+    "tests/real_grist/test_real_grist.py",
+    "tests/unit/test_app.py",
+    "tests/unit/test_cli.py",
+    "tests/unit/test_config.py",
+    "tests/unit/test_griststore.py",
+    "tests/unit/test_package.py",
+    "tests/unit/test_service.py",
+    "tests/unit/test_state.py"
+  ]
+}

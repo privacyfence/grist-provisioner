@@ -146,6 +146,18 @@ pip install -e ".[test,dev]"
 python3 -m pytest tests -q -m "not real_grist"
 ```
 
-`tests/real_grist` runs against a real grist-core container (`.github/workflows/real-grist.yml`). Releases: push a tag `vX.Y.Z` and `.github/workflows/release.yml` publishes `ghcr.io/privacyfence/grist-provisioner:X.Y.Z` and `:latest`.
+`tests/real_grist` runs against a real grist-core container (`.github/workflows/real-grist.yml`).
+
+### Releases
+
+1. In a pull request, rename `## [Unreleased]` in `CHANGELOG.md` to `## [X.Y.Z] - YYYY-MM-DD` and add a new empty `## [Unreleased]` above it.
+2. Merge it.
+3. Tag the merge commit: `git tag -a vX.Y.Z -m "vX.Y.Z" && git push origin vX.Y.Z`.
+
+The tag runs `.github/workflows/release.yml`: it runs the tests, builds `linux/amd64` and `linux/arm64`, publishes `ghcr.io/privacyfence/grist-provisioner:X.Y.Z` (and `X.Y` and `latest` for a non-prerelease) and creates the GitHub Release from the changelog section. A tag with a suffix such as `v0.2.0-rc.1` is a prerelease and gets only its full-version tag. The tag must be on `main`.
+
+`Actions → release → Run workflow` is a dry run: it builds the image and publishes nothing.
+
+A new package is private until its visibility is set to Public in the package settings.
 
 Licensed under Apache-2.0.

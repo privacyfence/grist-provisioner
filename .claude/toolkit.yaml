@@ -26,5 +26,8 @@ ci:
     - workflow: real-grist.yml
       use_when: The provisioner against a real grist-core container (the cloud session has no Docker)
       notes: It runs by itself on every push to feature/** and fix/** (read that run). workflow_dispatch with input `grist_image` works only once the workflow is on main.
+    - workflow: release.yml
+      use_when: "Dry run of a release: tests plus a multi-architecture image build, nothing published"
+      notes: "workflow_dispatch works only once the workflow is on main. It never publishes. Never push a release tag from a session."
 stacks:
   - python

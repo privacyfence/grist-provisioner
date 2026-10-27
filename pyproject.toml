@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=77", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grist-provisioner"
+dynamic = ["version"]
+description = "Gives PrivacyFence each person's Grist API key on a self-hosted grist-core."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+dependencies = ["starlette", "uvicorn"]
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-cov", "httpx"]
+dev = ["ruff", "mypy", "bandit"]
+
+[project.scripts]
+grist-provisioner = "grist_provisioner.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0.dev0"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+markers = ["real_grist: runs against a real grist-core container (needs GRIST_URL)"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.mypy]
+strict = true

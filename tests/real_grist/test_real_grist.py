@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from grist_provisioner.config import Settings
+from grist_provisioner.gristapi import GristTeam
 from grist_provisioner.griststore import GristStore
 from grist_provisioner.service import Provisioner, ProvisionError
 from grist_provisioner.state import StateStore, sha256
@@ -92,3 +93,42 @@ def test_provisioner_against_real_grist(tmp_path):
         state.set_managed(again["user_id"], sha256(reissued["key"]), 1)
         assert provisioner.expire_once() == 1
         assert _profile(reissued["key"]).status_code == 401
+
+
+def test_team_membership_against_real_grist(tmp_path):
+    boot_key = os.environ["GRIST_BOOT_KEY"]
+    with httpx.Client(base_url=GRIST_URL, headers={"x-boot-key": boot_key}, timeout=30) as grist:
+        created = grist.post("/api/orgs", json={"name": "QA team", "domain": "qa-team"})
+        assert created.status_code == 200, created.text
+        owner = grist.patch("/api/orgs/qa-team/access", json={"delta": {"users": {"erin@example.com": "owners"}}})
+        assert owner.status_code == 200, owner.text
+
+        store = GristStore(os.environ["GRIST_HOME_DB"])
+        state = StateStore(str(tmp_path / "state.sqlite3"))
+        settings = Settings(
+            grist_home_db=os.environ["GRIST_HOME_DB"],
+            state_db=str(tmp_path / "state.sqlite3"),
+            host="127.0.0.1",
+            port=8485,
+            admin_email="admin@example.com",
+            default_email="admin@example.com",
+            support_email="support@getgrist.com",
+            allowed_domains=("example.com",),
+        )
+        provisioner = Provisioner(store, state, settings, team=GristTeam(GRIST_URL, "qa-team", boot_key, "editors"))
+
+        provisioner.upsert("dave", "dave@example.com")  # no Grist account yet
+        issued = provisioner.issue_key("dave")
+        profile = _profile(issued["key"])
+        assert profile.status_code == 200, profile.text
+        assert profile.json()["email"] == "dave@example.com"
+
+        def roles() -> dict[str, str | None]:
+            answer = grist.get("/api/orgs/qa-team/access")
+            assert answer.status_code == 200, answer.text
+            return {u["email"]: u["access"] for u in answer.json()["users"]}
+
+        assert roles()["dave@example.com"] == "editors"
+
+        provisioner.upsert("erin", "erin@example.com")
+        assert roles()["erin@example.com"] == "owners"

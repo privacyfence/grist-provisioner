@@ -139,3 +139,88 @@ def test_expiry_loop_returns_at_once_when_stopped(monkeypatch):
     prov = FakeProvisioner(stop)
     cli._expiry_loop(prov, stop)
     assert prov.calls == 0
+
+
+KEY = "gristprov_" + "k" * 40
+
+
+def no_uvicorn(monkeypatch):
+    ran = []
+    monkeypatch.setattr(cli.uvicorn, "run", lambda *a, **k: ran.append(1))
+    return ran
+
+
+def test_serve_registers_key_file(env, monkeypatch, capsys):
+    ran = no_uvicorn(monkeypatch)
+    (env / "key").write_text(KEY + "\n")
+    monkeypatch.setenv("PROVISIONER_KEY_FILE", str(env / "key"))
+    assert cli.main(["serve"]) == 0
+    assert 'provisioning key "key-file" registered from PROVISIONER_KEY_FILE' in capsys.readouterr().err
+    assert StateStore(str(env / "state.sqlite3")).key_valid(KEY)
+    assert cli.main(["serve"]) == 0  # second start: already registered, silent
+    assert capsys.readouterr().err == ""
+    assert len(ran) == 2
+
+
+@pytest.mark.parametrize("content", [None, "nope", "gristprov_short"])
+def test_serve_bad_key_file_exit_2(env, monkeypatch, capsys, content):
+    ran = no_uvicorn(monkeypatch)
+    if content is not None:
+        (env / "key").write_text(content)
+    monkeypatch.setenv("PROVISIONER_KEY_FILE", str(env / "key"))
+    assert cli.main(["serve"]) == 2
+    err = capsys.readouterr().err
+    assert (
+        "PROVISIONER_KEY_FILE cannot be read: " if content is None else "must hold a key that starts with gristprov_"
+    ) in err
+    assert ran == []
+
+
+def test_serve_revoked_key_file_exit_2(env, monkeypatch, capsys):
+    ran = no_uvicorn(monkeypatch)
+    (env / "key").write_text(KEY)
+    monkeypatch.setenv("PROVISIONER_KEY_FILE", str(env / "key"))
+    assert cli.main(["serve"]) == 0
+    StateStore(str(env / "state.sqlite3")).revoke_key(1, 5)
+    capsys.readouterr()
+    assert cli.main(["serve"]) == 2
+    assert "PROVISIONER_KEY_FILE holds a revoked key; put a new key in the file" in capsys.readouterr().err
+    assert len(ran) == 1
+
+
+def team_env(env, monkeypatch):
+    (env / "boot").write_text("BOOT")
+    monkeypatch.setenv("PROVISIONER_GRIST_URL", "http://grist:8484")
+    monkeypatch.setenv("PROVISIONER_GRIST_TEAM_SITE", "team")
+    monkeypatch.setenv("PROVISIONER_GRIST_BOOT_KEY_FILE", str(env / "boot"))
+    monkeypatch.setenv("PROVISIONER_ALLOWED_DOMAINS", "example.com")
+
+
+def test_check_with_team_ok(env, monkeypatch, capsys):
+    team_env(env, monkeypatch)
+    monkeypatch.setattr(cli.GristTeam, "check", lambda self: None)
+    assert cli.main(["check"]) == 0
+    assert capsys.readouterr().out == "ok: 2 Grist users, 0 linked\nteam site: team\n"
+
+
+def test_check_with_team_error(env, monkeypatch, capsys):
+    team_env(env, monkeypatch)
+
+    def boom(self):
+        raise cli.GristApiError("Grist answered 401")
+
+    monkeypatch.setattr(cli.GristTeam, "check", boom)
+    assert cli.main(["check"]) == 2
+    out, err = capsys.readouterr()
+    assert out == "" and err == "Grist answered 401\n"
+
+
+def test_serve_builds_team(env, monkeypatch):
+    team_env(env, monkeypatch)
+    seen = {}
+    monkeypatch.setattr(cli, "Provisioner", lambda *a, **k: seen.update(k) or object())
+    monkeypatch.setattr(cli.threading, "Thread", lambda **k: type("T", (), {"start": lambda s: None})())
+    monkeypatch.setattr(cli, "create_app", lambda *a: None)
+    no_uvicorn(monkeypatch)
+    assert cli.main(["serve"]) == 0
+    assert isinstance(seen["team"], cli.GristTeam)

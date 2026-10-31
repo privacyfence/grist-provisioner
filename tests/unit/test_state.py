@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from grist_provisioner.state import StateStore
+from grist_provisioner.state import RevokedKeyError, StateStore
 
 
 @pytest.fixture
@@ -90,3 +90,44 @@ def test_count_links(state):
     state.add_link("e1", 1, 1)
     state.add_link("e2", 2, 1)
     assert state.count_links() == 2
+
+
+KEY = "gristprov_" + "k" * 40
+
+
+def rows(tmp_path):
+    raw = sqlite3.connect(tmp_path / "state.sqlite3")
+    try:
+        return raw.execute("SELECT name, key_sha256, revoked_at FROM provisioning_keys ORDER BY id").fetchall()
+    finally:
+        raw.close()
+
+
+def test_ensure_key_registers(state, tmp_path):
+    assert state.ensure_key("key-file", KEY, 7) is True
+    assert state.key_valid(KEY)
+    assert rows(tmp_path) == [("key-file", hashlib.sha256(KEY.encode()).hexdigest(), None)]
+
+
+def test_ensure_key_idempotent(state):
+    assert state.ensure_key("key-file", KEY, 7) is True
+    assert state.ensure_key("key-file", KEY, 8) is False
+    assert state.key_valid(KEY)
+    assert len(state.list_keys()) == 1
+
+
+def test_ensure_key_rotates_same_name_only(state):
+    _, other = state.add_key("privacyfence", 1)
+    state.ensure_key("key-file", KEY, 7)
+    new = KEY + "x"
+    assert state.ensure_key("key-file", new, 9) is True
+    assert not state.key_valid(KEY) and state.key_valid(new) and state.key_valid(other)
+
+
+def test_ensure_key_revoked_raises(state):
+    state.ensure_key("key-file", KEY, 7)
+    state.revoke_key(1, 8)
+    with pytest.raises(RevokedKeyError):
+        state.ensure_key("key-file", KEY, 9)
+    assert not state.key_valid(KEY)
+    state.ensure_key("other", "gristprov_" + "z" * 40, 9)  # the transaction was rolled back, so the db still works

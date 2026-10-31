@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Provisioning key from a file.** `PROVISIONER_KEY_FILE` registers a provisioning key at every start.
+- **Grist accounts and team-site membership.** With `PROVISIONER_GRIST_URL`, `PROVISIONER_GRIST_TEAM_SITE` and `PROVISIONER_GRIST_BOOT_KEY_FILE`, a person's first provisioning creates their Grist account through Grist's API, if needed, and adds them to the team site.
+
 ## [0.1.0] - 2026-10-27
 
 ### Added

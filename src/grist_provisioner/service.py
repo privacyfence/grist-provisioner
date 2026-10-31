@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from grist_provisioner.config import KEY_DAYS, Settings
+from grist_provisioner.gristapi import GristApiError, GristTeam
 from grist_provisioner.griststore import GristStore, GristUser
 from grist_provisioner.state import StateStore, sha256
 
@@ -31,12 +32,18 @@ def key_id(key: str) -> str:
 
 class Provisioner:
     def __init__(
-        self, store: GristStore, state: StateStore, settings: Settings, clock: Callable[[], float] = time.time
+        self,
+        store: GristStore,
+        state: StateStore,
+        settings: Settings,
+        clock: Callable[[], float] = time.time,
+        team: GristTeam | None = None,
     ) -> None:
         self._store = store
         self._state = state
         self._settings = settings
         self._clock = clock
+        self._team = team
         self._lock = threading.Lock()
         refused = (settings.admin_email, settings.default_email, settings.support_email, *_SPECIAL)
         self._refused = {e.lower() for e in refused if e}
@@ -71,6 +78,16 @@ class Provisioner:
             domains = self._settings.allowed_domains
             if domains and email.rsplit("@", 1)[1].lower() not in domains:
                 raise ProvisionError(403, "account email domain is not allowed")
+            if email.lower() in self._refused:
+                raise ProvisionError(409, _ADMIN)
+            if self._team is not None and self._state.link_for(external_id) is None:
+                try:
+                    added = self._team.ensure_member(email)
+                except GristApiError:
+                    raise ProvisionError(502, "could not add the account to the Grist team site") from None
+                if added:
+                    line = {"ts": int(time.time()), "event": "member", "external_id": external_id}
+                    print(json.dumps(line), flush=True)
             user = self._store.find_by_email(email)
             if user is None or user.type != "login":
                 raise ProvisionError(404, "no Grist account for this email")

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from grist_provisioner.config import KEY_DAYS, Settings
+from grist_provisioner.gristapi import GristApiError
 from grist_provisioner.griststore import GristStore
 from grist_provisioner.service import Provisioner, ProvisionError, key_id
 from grist_provisioner.state import StateStore, sha256
@@ -284,3 +285,65 @@ def test_audit_lines_have_no_email_or_key(env, capsys):
     assert [x["event"] for x in lines] == ["link", "issue", "link", "adopt", "release", "link", "issue", "expire"]
     assert lines[4]["revoked"] is True and lines[7] == {**lines[7], "external_id": "u7", "revoked": True}
     assert "@" not in out and key not in out and "bobkey" not in out
+
+
+class FakeTeam:
+    def __init__(self, raw, added=True, fail=False):
+        self.raw = raw
+        self.added = added
+        self.fail = fail
+        self.calls = []
+
+    def ensure_member(self, email):
+        self.calls.append(email)
+        if self.fail:
+            raise GristApiError("Grist answered 500")
+        if email == "newbie@example.com":  # Grist creates the account
+            self.raw.execute("INSERT INTO users (id, name, type) VALUES (20, 'n', 'login')")
+            self.raw.execute("INSERT INTO logins (email, display_email, user_id) VALUES (?, ?, 20)", (email, email))
+            self.raw.commit()
+        return self.added
+
+
+def with_team(env, **kw):
+    team = FakeTeam(env.raw, **kw)
+    prov = Provisioner(env.store, env.state, settings(), clock=lambda: env.now, team=team)
+    return prov, team
+
+
+def test_refused_email_409_before_team(env):
+    prov, team = with_team(env)
+    assert status(prov.upsert, "u1", "boss@example.com") == (409, "account is a Grist admin; connect it by hand")
+    assert team.calls == []
+
+
+def test_first_upsert_adds_member(env, capsys):
+    prov, team = with_team(env)
+    out = prov.upsert("n1", "newbie@example.com")
+    assert team.calls == ["newbie@example.com"] and out["user_id"] == 20
+    line = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert set(line) == {"ts", "event", "external_id"} and line["event"] == "member" and line["external_id"] == "n1"
+
+
+def test_first_upsert_already_member_is_silent(env, capsys):
+    prov, team = with_team(env, added=False)
+    prov.upsert("u1", "alice@example.com")
+    assert team.calls == ["alice@example.com"]
+    assert "member" not in capsys.readouterr().out
+
+
+def test_linked_upsert_skips_team(env):
+    prov, team = with_team(env)
+    prov.upsert("u1", "alice@example.com")
+    prov.upsert("u1", "alice@example.com")
+    assert team.calls == ["alice@example.com"]
+
+
+def test_team_error_502(env):
+    prov, _ = with_team(env, fail=True)
+    assert status(prov.upsert, "u1", "alice@example.com") == (502, "could not add the account to the Grist team site")
+    assert env.state.link_for("u1") is None
+
+
+def test_no_team_404_as_before(env):
+    assert status(env.prov.upsert, "u1", "newbie@example.com") == (404, "no Grist account for this email")

@@ -16,6 +16,10 @@ CREATE TABLE IF NOT EXISTS managed_keys (grist_user_id INTEGER PRIMARY KEY, key_
 """
 
 
+class RevokedKeyError(Exception):
+    """The key is already registered and has been revoked."""
+
+
 def sha256(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
@@ -34,6 +38,30 @@ class StateStore:
             (name, sha256(key), now),
         )
         return int(cur.lastrowid or 0), key
+
+    def ensure_key(self, name: str, key: str, now: int) -> bool:
+        """Register `key` under `name`; the name's previous active key is revoked. False if already active."""
+        sha = sha256(key)
+        self._db.execute("BEGIN IMMEDIATE")
+        try:
+            row = self._db.execute("SELECT revoked_at FROM provisioning_keys WHERE key_sha256 = ?", (sha,)).fetchone()
+            if row is not None and row[0] is not None:
+                raise RevokedKeyError(name)
+            if row is not None:
+                changed = False
+            else:
+                self._db.execute(
+                    "UPDATE provisioning_keys SET revoked_at = ? WHERE name = ? AND revoked_at IS NULL", (now, name)
+                )
+                self._db.execute(
+                    "INSERT INTO provisioning_keys (name, key_sha256, created_at) VALUES (?, ?, ?)", (name, sha, now)
+                )
+                changed = True
+            self._db.execute("COMMIT")
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            raise
+        return changed
 
     def list_keys(self) -> list[dict[str, Any]]:
         rows = self._db.execute("SELECT id, name, created_at, revoked_at FROM provisioning_keys ORDER BY id")

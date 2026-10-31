@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-31
+
 ### Added
 
 - **Provisioning key from a file.** `PROVISIONER_KEY_FILE` registers a provisioning key at every start.
